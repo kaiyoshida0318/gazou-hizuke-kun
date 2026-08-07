@@ -42,6 +42,8 @@
   .btn.primary{background:var(--accent);color:var(--accent-ink);}
   .btn.primary:disabled{background:#d9a3ab;cursor:not-allowed;}
   .btn.ghost{background:var(--chip);color:var(--ink);}
+  .btn.ghost.active{background:var(--accent);color:#fff;}
+  .btn.danger{background:#fff;color:var(--accent);border:1px solid var(--accent);}
   .btn.sm{padding:6px 12px;font-size:12px;}
   .presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
   .preview-box{position:relative;width:100%;max-width:500px;margin:0 auto;
@@ -91,6 +93,9 @@
         </div>
         <input type="file" id="file1" accept="image/*" multiple hidden>
         <div class="list" id="fileList"></div>
+        <div class="bar" id="importBar" style="display:none;margin-top:8px;">
+          <button class="btn danger sm" id="clearImportsBtn">取り込み画像を全部削除</button>
+        </div>
 
         <h2 style="margin-top:20px;">2. 貼り付ける部品画像</h2>
         <div class="ov-mini">
@@ -136,6 +141,7 @@
 
         <div class="bar" id="resultBar" style="display:none;">
           <button class="btn ghost" id="zipBtn">まとめてZIPで保存</button>
+          <button class="btn danger" id="clearResultsBtn">処理結果を全部削除</button>
           <label style="font-size:12px;color:var(--muted);">形式
             <select id="fmt" style="width:auto;display:inline-block;margin-left:6px;">
               <option value="image/jpeg">JPEG</option>
@@ -199,12 +205,17 @@ document.getElementById('ovFile').onchange=e=>{
 // ---- preset positions ----
 function ovW(){return overlayImg.width*pos.scale;}
 function ovH(){return overlayImg.height*pos.scale;}
+function setActivePreset(p){
+  document.querySelectorAll('[data-preset]').forEach(b=>
+    b.classList.toggle('active', b.dataset.preset===p));
+}
 function applyPreset(p){
   const w=ovW(), h=ovH();
   if(p==='br'){pos.x=OUT-w; pos.y=OUT-h;}
   else if(p==='right'){pos.x=OUT-w;}
   else if(p==='tr'){pos.x=OUT-w; pos.y=0;}
   else if(p==='bl'){pos.x=0; pos.y=OUT-h;}
+  setActivePreset(p);
   syncInputs();
 }
 document.querySelectorAll('[data-preset]').forEach(b=>{
@@ -215,8 +226,8 @@ function syncInputs(){
   document.getElementById('posX').value=Math.round(pos.x);
   document.getElementById('posY').value=Math.round(pos.y);
 }
-document.getElementById('posX').oninput=e=>{pos.x=+e.target.value||0; draw();};
-document.getElementById('posY').oninput=e=>{pos.y=+e.target.value||0; draw();};
+document.getElementById('posX').oninput=e=>{pos.x=+e.target.value||0; setActivePreset(null); draw();};
+document.getElementById('posY').oninput=e=>{pos.y=+e.target.value||0; setActivePreset(null); draw();};
 document.getElementById('scale').oninput=e=>{
   pos.scale=(+e.target.value)/100;
   document.getElementById('scaleVal').textContent=e.target.value;
@@ -253,8 +264,12 @@ function renderList(){
   el.innerHTML=baseImages.map((b,i)=>
     `<div><span>${b.name}</span><button onclick="removeImg(${i})">削除</button></div>`).join('');
   document.getElementById('count').textContent=baseImages.length?`${baseImages.length} 枚`:'';
+  document.getElementById('importBar').style.display=baseImages.length?'flex':'none';
 }
 window.removeImg=i=>{baseImages.splice(i,1); refresh();};
+document.getElementById('clearImportsBtn').onclick=()=>{
+  if(baseImages.length && confirm('取り込んだ画像をすべて削除しますか？')){ baseImages=[]; refresh(); }
+};
 function refresh(){
   renderList();
   document.getElementById('processBtn').disabled=baseImages.length===0;
@@ -305,7 +320,7 @@ function moveDrag(e){
   if(!dragging)return;
   const p=canvasPt(e);
   pos.x=Math.round(p.x-off.x); pos.y=Math.round(p.y-off.y);
-  syncInputs(); draw(); e.preventDefault();
+  setActivePreset(null); syncInputs(); draw(); e.preventDefault();
 }
 function endDrag(){dragging=false;}
 pv.addEventListener('mousedown',startDrag); window.addEventListener('mousemove',moveDrag); window.addEventListener('mouseup',endDrag);
@@ -338,6 +353,14 @@ function renderResults(){
     </div>`).join('');
   document.getElementById('resultBar').style.display=results.length?'flex':'none';
 }
+document.getElementById('clearResultsBtn').onclick=()=>{
+  if(results.length && confirm('処理結果をすべて削除しますか？')){
+    results.forEach(r=>URL.revokeObjectURL(r.url));
+    results=[];
+    document.getElementById('thumbs').innerHTML='';
+    renderResults();
+  }
+};
 document.getElementById('fmt').onchange=()=>{ if(results.length) document.getElementById('processBtn').click(); };
 document.getElementById('zipBtn').onclick=async()=>{
   const zip=new JSZip();
