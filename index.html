@@ -170,10 +170,10 @@
       <div>
         <h2>1. 画像を取り込む（ファイル名＝商品番号）</h2>
         <div class="drop" id="drop2">
-          ここに画像をドラッグ＆ドロップ<br>または <b>クリックして選択</b><br>
-          <small>（ファイル名が商品番号になっている前提。複数可）</small>
+          ここに画像または ZIP をドラッグ＆ドロップ<br>または <b>クリックして選択</b><br>
+          <small>（ファイル名が商品番号になっている前提。複数可・ZIP可）</small>
         </div>
-        <input type="file" id="file2" accept="image/*" multiple hidden>
+        <input type="file" id="file2" accept="image/*,.zip" multiple hidden>
         <div class="list" id="fileList2"></div>
         <div class="bar" id="importBar2" style="display:none;margin-top:8px;">
           <button class="btn danger sm" id="clearImports2">取り込み画像を全部削除</button>
@@ -242,7 +242,7 @@ const OVERLAY_DATA_URL = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/4QA
 const OUT = 750; // 出力サイズ
 
 // ★バージョン：更新のたびにこの数字を上げる（例: 1.0.0 → 1.0.1）
-const VERSION = "1.1.1";
+const VERSION = "1.2.0";
 document.getElementById('ver').textContent = 'v' + VERSION;
 
 // ---- state ----
@@ -463,17 +463,37 @@ drop2.onclick=()=>file2.click();
 drop2.addEventListener('drop',e=>addF2(e.dataTransfer.files));
 file2.onchange=e=>addF2(e.target.files);
 function baseName(n){return n.replace(/\.[^.]+$/,'');}
-function addF2(files){
-  const arr=[...files].filter(f=>f.type.startsWith('image/'));
-  let pending=arr.length; if(!pending)return;
-  arr.forEach(f=>{
-    const r=new FileReader();
-    r.onload=ev=>{const img=new Image();img.onload=()=>{
-      f2Images.push({name:f.name, base:baseName(f.name), img});
-      if(--pending<=0) refresh2(); else renderList2();
-    };img.src=ev.target.result;};
-    r.readAsDataURL(f);
+const IMG_RE=/\.(jpe?g|png|webp|gif|bmp)$/i;
+function addOneImageBlob(name,blob){
+  return new Promise(res=>{
+    const url=URL.createObjectURL(blob);
+    const img=new Image();
+    img.onload=()=>{ f2Images.push({name, base:baseName(name), img}); res(true); };
+    img.onerror=()=>{ URL.revokeObjectURL(url); res(false); };
+    img.src=url;
   });
+}
+async function addZip(file){
+  try{
+    const zip=await JSZip.loadAsync(file);
+    const entries=Object.values(zip.files)
+      .filter(e=>!e.dir && IMG_RE.test(e.name) && !e.name.includes('__MACOSX') && !e.name.split('/').pop().startsWith('.'));
+    let n=0;
+    for(const e of entries){
+      const blob=await e.async('blob');
+      const nm=e.name.split('/').pop(); // フォルダ階層を除いたファイル名
+      if(await addOneImageBlob(nm,blob)) n++;
+    }
+    return n;
+  }catch(err){ alert('ZIPの読み込みに失敗しました: '+err.message); return 0; }
+}
+async function addF2(files){
+  const arr=[...files]; let added=0;
+  for(const f of arr){
+    if(/\.zip$/i.test(f.name)) added+=await addZip(f);
+    else if(f.type.startsWith('image/')||IMG_RE.test(f.name)){ if(await addOneImageBlob(f.name,f)) added++; }
+  }
+  if(added) refresh2(); else renderList2();
 }
 function renderList2(){
   $('fileList2').innerHTML=f2Images.map((b,i)=>
