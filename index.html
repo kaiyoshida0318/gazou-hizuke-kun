@@ -53,8 +53,8 @@
   .presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
   .preview-box{position:relative;width:100%;max-width:500px;margin:0 auto;
     background:#f0f0f0 repeating-conic-gradient(#e9edf1 0% 25%, #f6f8fa 0% 50%) 50%/22px 22px;
-    border:1px solid var(--line);border-radius:8px;overflow:hidden;aspect-ratio:1/1;}
-  #previewCanvas{width:100%;height:100%;display:block;cursor:move;touch-action:none;}
+    border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+  .preview-box canvas{width:100%;height:auto;display:block;cursor:move;touch-action:none;}
   .hint{font-size:12px;color:var(--muted);margin:8px 0 0;}
   .err{color:var(--accent);font-weight:700;}
   .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;margin-top:16px;}
@@ -242,7 +242,7 @@ const OVERLAY_DATA_URL = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/4QA
 const OUT = 750; // 出力サイズ
 
 // ★バージョン：更新のたびにこの数字を上げる（例: 1.0.0 → 1.0.1）
-const VERSION = "1.3.0";
+const VERSION = "1.4.0";
 document.getElementById('ver').textContent = 'v' + VERSION;
 
 // ---- state ----
@@ -279,6 +279,17 @@ document.getElementById('ovFile').onchange=e=>{
   const r=new FileReader(); r.onload=ev=>setOverlay(ev.target.result); r.readAsDataURL(f);
 };
 
+// ---- 元画像サイズをそのまま使う（白い余白を作らない） ----
+function fitBase(canvas,ctx,img){
+  const W=img.naturalWidth||img.width, H=img.naturalHeight||img.height;
+  canvas.width=W; canvas.height=H;
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(img,0,0);
+  return {W,H};
+}
+function refW(){return baseImages.length?(baseImages[0].img.naturalWidth||baseImages[0].img.width):OUT;}
+function refH(){return baseImages.length?(baseImages[0].img.naturalHeight||baseImages[0].img.height):OUT;}
+
 // ---- preset positions ----
 function ovW(){return overlayImg.width*pos.scale;}
 function ovH(){return overlayImg.height*pos.scale;}
@@ -287,11 +298,11 @@ function setActivePreset(p){
     b.classList.toggle('active', b.dataset.preset===p));
 }
 function applyPreset(p){
-  const w=ovW(), h=ovH();
-  if(p==='br'){pos.x=OUT-w; pos.y=OUT-h;}
-  else if(p==='right'){pos.x=OUT-w;}
-  else if(p==='tr'){pos.x=OUT-w; pos.y=0;}
-  else if(p==='bl'){pos.x=0; pos.y=OUT-h;}
+  const w=ovW(), h=ovH(), W=refW(), H=refH();
+  if(p==='br'){pos.x=W-w; pos.y=H-h;}
+  else if(p==='right'){pos.x=W-w;}
+  else if(p==='tr'){pos.x=W-w; pos.y=0;}
+  else if(p==='bl'){pos.x=0; pos.y=H-h;}
   setActivePreset(p);
   syncInputs();
 }
@@ -374,11 +385,10 @@ function refresh(){
 // ---- draw preview ----
 const pv=document.getElementById('previewCanvas'), pctx=pv.getContext('2d');
 function draw(){
-  pctx.clearRect(0,0,OUT,OUT);
   if(baseImages.length){
-    drawCover(pctx, baseImages[0].img);
+    fitBase(pv,pctx,baseImages[0].img);
   }else{
-    pctx.fillStyle='#fff'; pctx.fillRect(0,0,OUT,OUT);
+    pv.width=OUT; pv.height=OUT; pctx.fillStyle='#fff'; pctx.fillRect(0,0,OUT,OUT);
   }
   if(overlayImg.complete && overlayImg.width){
     pctx.drawImage(overlayImg, pos.x, pos.y, ovW(), ovH());
@@ -387,13 +397,6 @@ function draw(){
     pctx.strokeRect(pos.x, pos.y, ovW(), ovH()); pctx.setLineDash([]);
   }
 }
-// draw image scaled to fill 750x750 (contain -> letterbox white)
-function drawCover(ctx,img){
-  ctx.fillStyle='#fff'; ctx.fillRect(0,0,OUT,OUT);
-  const s=Math.min(OUT/img.width, OUT/img.height);
-  const w=img.width*s, h=img.height*s;
-  ctx.drawImage(img,(OUT-w)/2,(OUT-h)/2,w,h);
-}
 
 // ---- drag to reposition ----
 let dragging=false, off={x:0,y:0};
@@ -401,7 +404,7 @@ function canvasPt(e){
   const r=pv.getBoundingClientRect();
   const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
   const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
-  return {x:cx*(OUT/r.width), y:cy*(OUT/r.height)};
+  return {x:cx*(pv.width/r.width), y:cy*(pv.height/r.height)};
 }
 function startDrag(e){
   const p=canvasPt(e);
@@ -424,12 +427,13 @@ let results=[]; // {name, blob, url}
 document.getElementById('processBtn').onclick=async()=>{
   const fmt=document.getElementById('fmt').value;
   results=[];
-  const c=document.createElement('canvas'); c.width=OUT; c.height=OUT;
+  const c=document.createElement('canvas');
   const ctx=c.getContext('2d');
+  const RW=refW(), RH=refH();
   for(const b of baseImages){
-    ctx.clearRect(0,0,OUT,OUT);
-    drawCover(ctx,b.img);
-    ctx.drawImage(overlayImg,pos.x,pos.y,ovW(),ovH());
+    const {W,H}=fitBase(c,ctx,b.img);
+    // 元画像サイズが違っても右下からの余白を保つ
+    ctx.drawImage(overlayImg, W-RW+pos.x, H-RH+pos.y, ovW(), ovH());
     const blob=await new Promise(res=>c.toBlob(res,fmt,0.95));
     const ext=fmt==='image/png'?'png':'jpg';
     const name=b.name.replace(/\.[^.]+$/,'')+'_edited.'+ext;
@@ -584,11 +588,11 @@ function textStyle(ctx){
   ctx.textAlign='right'; ctx.textBaseline='bottom';
   return px;
 }
-function drawText(ctx,l1,l2){
+function drawText(ctx,l1,l2,W,H){
   const px=textStyle(ctx);
   const lh=+$('fLh').value||Math.round(px*1.2);
   const rm=+$('fRight').value||0, bm=+$('fBottom').value||0;
-  const xr=OUT-rm, yb=OUT-bm;
+  const xr=W-rm, yb=H-bm;
   if(l2) ctx.fillText(l2,xr,yb);
   if(l1) ctx.fillText(l1,xr,yb-lh);
   const w1=l1?ctx.measureText(l1).width:0, w2=l2?ctx.measureText(l2).width:0;
@@ -611,11 +615,10 @@ function currentPreviewItem(){
   return {img:f2Images[0].img, l1:'', l2:'', base:f2Images[0].base, matched:false};
 }
 function draw2(){
-  p2ctx.clearRect(0,0,OUT,OUT);
   const it=currentPreviewItem();
-  if(!it){ p2ctx.fillStyle='#fff'; p2ctx.fillRect(0,0,OUT,OUT); lastBox=null; return; }
-  drawCover(p2ctx,it.img);
-  drawText(p2ctx,it.l1,it.l2);
+  if(!it){ pv2.width=OUT; pv2.height=OUT; p2ctx.fillStyle='#fff'; p2ctx.fillRect(0,0,OUT,OUT); lastBox=null; return; }
+  const {W,H}=fitBase(pv2,p2ctx,it.img);
+  drawText(p2ctx,it.l1,it.l2,W,H);
 }
 ['fFont','fPt','fColor','fRight','fBottom','fLh'].forEach(id=>{
   $(id).addEventListener('input',draw2);
@@ -658,7 +661,7 @@ let drag2=false, off2={x:0,y:0};
 function pt2(e){const r=pv2.getBoundingClientRect();
   const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
   const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
-  return {x:cx*(OUT/r.width), y:cy*(OUT/r.height)};}
+  return {x:cx*(pv2.width/r.width), y:cy*(pv2.height/r.height)};}
 pv2.addEventListener('mousedown',s2); window.addEventListener('mousemove',m2); window.addEventListener('mouseup',()=>drag2=false);
 pv2.addEventListener('touchstart',s2,{passive:false}); pv2.addEventListener('touchmove',m2,{passive:false}); pv2.addEventListener('touchend',()=>drag2=false);
 function s2(e){ if(!lastBox)return; const p=pt2(e);
@@ -666,8 +669,8 @@ function s2(e){ if(!lastBox)return; const p=pt2(e);
     drag2=true; off2.x=lastBox.right-p.x; off2.y=lastBox.bottom-p.y; e.preventDefault(); } }
 function m2(e){ if(!drag2)return; const p=pt2(e);
   let xr=p.x+off2.x, yb=p.y+off2.y;
-  $('fRight').value=Math.max(0,Math.round(OUT-xr));
-  $('fBottom').value=Math.max(0,Math.round(OUT-yb));
+  $('fRight').value=Math.max(0,Math.round(pv2.width-xr));
+  $('fBottom').value=Math.max(0,Math.round(pv2.height-yb));
   draw2(); e.preventDefault(); }
 
 // ---- 一括処理 ----
@@ -675,13 +678,12 @@ $('process2').onclick=async()=>{
   const fmt=$('fmt2').value, ext=fmt==='image/png'?'png':'jpg';
   const map=buildLookup();
   results2=[];
-  const c=document.createElement('canvas'); c.width=OUT; c.height=OUT; const ctx=c.getContext('2d');
+  const c=document.createElement('canvas'); const ctx=c.getContext('2d');
   for(const it of f2Images){
     const hit=map.get(it.base.trim().toLowerCase());
     if(!hit) continue; // 未マッチはスキップ
-    ctx.clearRect(0,0,OUT,OUT);
-    drawCover(ctx,it.img);
-    drawText(ctx,hit.l1,hit.l2);
+    const {W,H}=fitBase(c,ctx,it.img);
+    drawText(ctx,hit.l1,hit.l2,W,H);
     const blob=await new Promise(res=>c.toBlob(res,fmt,0.95));
     results2.push({name:it.base+'.'+ext, blob, url:URL.createObjectURL(blob)});
   }
