@@ -168,10 +168,10 @@
     <div class="grid">
       <!-- 左：設定 -->
       <div>
-        <h2>1. 画像を取り込む（ファイル名＝商品番号）</h2>
+        <h2>1. 画像を取り込む（ファイル名＝選択画像ファイル名）</h2>
         <div class="drop" id="drop2">
           ここに画像または ZIP をドラッグ＆ドロップ<br>または <b>クリックして選択</b><br>
-          <small>（ファイル名が商品番号になっている前提。複数可・ZIP可）</small>
+          <small>（ファイル名が「選択画像ファイル名」と一致する前提。複数可・ZIP可）</small>
         </div>
         <input type="file" id="file2" accept="image/*,.zip" multiple hidden>
         <div class="list" id="fileList2"></div>
@@ -186,7 +186,8 @@
         <input type="file" id="csvFile" accept=".csv,.tsv,.xlsx,.xls" hidden>
         <p class="hint" id="csvInfo"></p>
         <div id="mapUI" style="display:none;">
-          <div class="field"><label>商品番号の列</label><select id="colKey"></select></div>
+          <div class="field"><label>画像と突き合わせる列（選択画像ファイル名）</label><select id="colMatch"></select></div>
+          <div class="field"><label>出力ファイル名にする列（商品番号）</label><select id="colSku"></select></div>
           <div class="row">
             <div class="field"><label>1行目の列</label><select id="colL1"></select></div>
             <div class="field"><label>2行目の列</label><select id="colL2"></select></div>
@@ -242,7 +243,7 @@ const OVERLAY_DATA_URL = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/4QA
 const OUT = 750; // 出力サイズ
 
 // ★バージョン：更新のたびにこの数字を上げる（例: 1.0.0 → 1.0.1）
-const VERSION = "1.4.0";
+const VERSION = "1.5.0";
 document.getElementById('ver').textContent = 'v' + VERSION;
 
 // ---- state ----
@@ -559,22 +560,25 @@ function detectCol(re, avoid){
 }
 function buildMapUI(){
   const opts=csvHeaders.map((h,i)=>`<option value="${i}">${h||'(列'+(i+1)+')'}</option>`).join('');
-  ['colKey','colL1','colL2'].forEach(id=>{$(id).innerHTML=opts;});
+  ['colMatch','colSku','colL1','colL2'].forEach(id=>{$(id).innerHTML=opts;});
+  const m=detectCol(/選択画像|画像ファイル/);
   const k=detectCol(/商品番号/, /管理/);
   const l1=detectCol(/1行目|１行目/);
   const l2=detectCol(/2行目|２行目/);
-  $('colKey').value = k>=0?k:1;
-  $('colL1').value  = l1>=0?l1:2;
-  $('colL2').value  = l2>=0?l2:3;
+  $('colMatch').value = m>=0?m:(csvHeaders.length-1);
+  $('colSku').value   = k>=0?k:1;
+  $('colL1').value    = l1>=0?l1:2;
+  $('colL2').value    = l2>=0?l2:3;
   $('mapUI').style.display='block';
-  ['colKey','colL1','colL2'].forEach(id=>$(id).onchange=refresh2);
+  ['colMatch','colSku','colL1','colL2'].forEach(id=>$(id).onchange=refresh2);
 }
+function normKey(s){ return String(s??'').trim().replace(/\.[^.]+$/,'').toLowerCase(); }
 function buildLookup(){
-  const k=+$('colKey').value, a=+$('colL1').value, b=+$('colL2').value;
+  const mCol=+$('colMatch').value, sCol=+$('colSku').value, a=+$('colL1').value, b=+$('colL2').value;
   const map=new Map();
   csvRows.forEach(r=>{
-    const key=String(r[k]??'').trim().toLowerCase();
-    if(key) map.set(key,{l1:String(r[a]??'').trim(), l2:String(r[b]??'').trim()});
+    const key=normKey(r[mCol]);
+    if(key) map.set(key,{l1:String(r[a]??'').trim(), l2:String(r[b]??'').trim(), sku:String(r[sCol]??'').trim()});
   });
   return map;
 }
@@ -609,7 +613,7 @@ function currentPreviewItem(){
   const map=buildLookup();
   // 最初にマッチする画像を優先、無ければ1枚目
   for(const it of f2Images){
-    const hit=map.get(it.base.trim().toLowerCase());
+    const hit=map.get(normKey(it.base));
     if(hit) return {img:it.img, l1:hit.l1, l2:hit.l2, base:it.base, matched:true};
   }
   return {img:f2Images[0].img, l1:'', l2:'', base:f2Images[0].base, matched:false};
@@ -629,18 +633,22 @@ function updateMatch(){
   const info=$('matchInfo');
   if(!f2Images.length || !csvRows.length){ info.innerHTML=''; return 0; }
   const map=buildLookup();
-  const imgSet=new Set(f2Images.map(it=>it.base.trim().toLowerCase()));
-  const matched=f2Images.filter(it=>map.has(it.base.trim().toLowerCase()));
+  const imgSet=new Set(f2Images.map(it=>normKey(it.base)));
+  const matched=f2Images.filter(it=>map.has(normKey(it.base)));
   // 「画像はあるが商品情報が無い」→ エラーにしない（何も出さない）
   // 「商品情報はあるのに画像が無い」→ エラー表示
-  const k=+$('colKey').value, missing=[], seen=new Set();
+  const mCol=+$('colMatch').value, sCol=+$('colSku').value, missing=[], seen=new Set();
   csvRows.forEach(r=>{
-    const key=String(r[k]??'').trim(), norm=key.toLowerCase();
-    if(key && !imgSet.has(norm) && !seen.has(norm)){ seen.add(norm); missing.push(key); }
+    const raw=String(r[mCol]??'').trim(), norm=normKey(raw);
+    if(raw && !imgSet.has(norm) && !seen.has(norm)){
+      seen.add(norm);
+      const sku=String(r[sCol]??'').trim();
+      missing.push(sku?`${raw}（${sku}）`:raw);
+    }
   });
   let html=`画像 ${f2Images.length}枚 中 マッチ ${matched.length}枚`;
   if(missing.length){
-    html+=`<br><span class="err">⚠ 商品情報にあるのに画像が無い商品番号（${missing.length}件）：${missing.join('、')}</span>`;
+    html+=`<br><span class="err">⚠ 商品情報にあるのに画像が無い（${missing.length}件）：${missing.join('、')}</span>`;
   }
   info.innerHTML=html;
   return matched.length;
@@ -680,12 +688,13 @@ $('process2').onclick=async()=>{
   results2=[];
   const c=document.createElement('canvas'); const ctx=c.getContext('2d');
   for(const it of f2Images){
-    const hit=map.get(it.base.trim().toLowerCase());
+    const hit=map.get(normKey(it.base));
     if(!hit) continue; // 未マッチはスキップ
     const {W,H}=fitBase(c,ctx,it.img);
     drawText(ctx,hit.l1,hit.l2,W,H);
     const blob=await new Promise(res=>c.toBlob(res,fmt,0.95));
-    results2.push({name:it.base+'.'+ext, blob, url:URL.createObjectURL(blob)});
+    const outName=(hit.sku||it.base)+'.'+ext; // 出力名は商品番号
+    results2.push({name:outName, blob, url:URL.createObjectURL(blob)});
   }
   renderResults2();
 };
