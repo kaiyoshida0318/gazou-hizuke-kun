@@ -78,6 +78,7 @@
   .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;}
   .count{font-size:13px;color:var(--muted);}
   .ov-mini{display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px;background:var(--chip);border-radius:8px;}
+  .ov-mini.hover{outline:2px dashed var(--accent);outline-offset:2px;background:#fff6f7;}
   .ov-mini img{height:34px;border:1px solid var(--line);background:#fff;}
   .ov-mini small{color:var(--muted);font-size:11px;}
   .list{margin-top:12px;max-height:170px;overflow:auto;font-size:12px;}
@@ -123,7 +124,7 @@
           <img id="ovPrev" alt="部品">
           <div>
             <div id="ovSize" style="font-size:12px;font-weight:600;"></div>
-            <small>共通で使う部品画像（差し替え可）</small>
+            <small>共通で使う部品画像（ここにドラッグ＆ドロップ／差し替え可）</small>
           </div>
           <button class="btn ghost sm" id="ovBtn" style="margin-left:auto;">差し替え</button>
           <input type="file" id="ovFile" accept="image/*" hidden>
@@ -267,7 +268,7 @@ const OVERLAY_DATA_URL = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/4QA
 const OUT = 750; // 出力サイズ
 
 // ★バージョン：更新のたびにこの数字を上げる（例: 1.0.0 → 1.0.1）
-const VERSION = "1.9.1";
+const VERSION = "1.9.2";
 document.getElementById('ver').textContent = 'v' + VERSION;
 
 // ---- state ----
@@ -308,6 +309,14 @@ document.getElementById('ovFile').onchange=e=>{
   const f=e.target.files[0]; if(!f)return;
   const r=new FileReader(); r.onload=ev=>setOverlay(ev.target.result); r.readAsDataURL(f);
 };
+// 部品スロットにドラッグ＆ドロップで取り込み
+const ovSlot=document.querySelector('.ov-mini');
+['dragover','dragenter'].forEach(ev=>ovSlot.addEventListener(ev,e=>{e.preventDefault();ovSlot.classList.add('hover');}));
+['dragleave','drop'].forEach(ev=>ovSlot.addEventListener(ev,e=>{e.preventDefault();ovSlot.classList.remove('hover');}));
+ovSlot.addEventListener('drop',e=>{
+  const f=[...e.dataTransfer.files].find(x=>x.type.startsWith('image/'));
+  if(f){ const r=new FileReader(); r.onload=ev=>setOverlay(ev.target.result); r.readAsDataURL(f); }
+});
 
 /* ---- 部品画像ライブラリ（ブラウザ内 IndexedDB に保存） ---- */
 const PDB='gazouTool', PSTORE='parts';
