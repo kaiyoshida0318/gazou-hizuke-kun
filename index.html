@@ -151,7 +151,10 @@
           <button class="btn ghost sm" data-preset="tr">右上</button>
           <button class="btn ghost sm" data-preset="bl">左下</button>
         </div>
-        <p class="hint">プレビュー上で部品をドラッグで移動、右端の■を掴んでドラッグで拡大縮小（縦横比は固定）できます。全画像に同じ設定で貼り付けます。</p>
+        <div class="bar" style="margin-top:8px;">
+          <button class="btn ghost sm" id="applyAllBtn" style="display:none;">現在の設定を全画像に適用</button>
+        </div>
+        <p class="hint">プレビュー上で部品をドラッグで移動、右端の■を掴んでドラッグで拡大縮小（縦横比は固定）できます。位置・サイズは<b>画像ごとに個別</b>に保持され、その設定で一括処理されます。まとめて揃えたいときは「現在の設定を全画像に適用」を押してください。</p>
       </div>
 
       <!-- 右：プレビュー -->
@@ -268,18 +271,28 @@ const OVERLAY_DATA_URL = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/4QA
 const OUT = 750; // 出力サイズ
 
 // ★バージョン：更新のたびにこの数字を上げる（例: 1.0.0 → 1.0.1）
-const VERSION = "1.9.2";
+const VERSION = "2.0.0";
 document.getElementById('ver').textContent = 'v' + VERSION;
 
 // ---- state ----
-let baseImages = [];      // {name, img}
+let baseImages = [];      // {name, img, pos:{x,y,scale}} ※位置・サイズは画像ごとに保持
 let selIdx = 0;           // プレビュー表示中の画像
 let overlayImg = new Image();
-let pos = {x:0, y:0, scale:1};
-// 選択中画像と基準(1枚目)との比率
+let tmpPos = {x:0, y:0, scale:1};   // 画像が無いときの一時値
 function selImg(){ return baseImages[selIdx] ? baseImages[selIdx].img : null; }
-function pvFX(){ const im=selImg(); return im ? (im.naturalWidth/refW()) : 1; }
-function pvFY(){ const im=selImg(); return im ? (im.naturalHeight/refH()) : 1; }
+function curPos(){ return baseImages[selIdx] ? baseImages[selIdx].pos : tmpPos; }  // 選択中画像の設定
+// 新規取り込み画像に初期の位置・サイズを付与（1枚目の設定を比率で引き継ぐ／無ければ右下ぴったり）
+function withPos(item){
+  const W=item.img.naturalWidth, H=item.img.naturalHeight, oW=overlayImg.width||0, oH=overlayImg.height||0;
+  const t=baseImages[0];
+  if(t && oW){
+    const sx=W/t.img.naturalWidth, sy=H/t.img.naturalHeight;
+    item.pos={x:t.pos.x*sx, y:t.pos.y*sy, scale:t.pos.scale*sx};
+  }else{
+    item.pos={x:Math.max(0,W-oW), y:Math.max(0,H-oH), scale:1};  // 右下ぴったり
+  }
+  return item;
+}
 
 // ---- tabs ----
 document.querySelectorAll('.tab').forEach(t=>{
@@ -297,8 +310,8 @@ function setOverlay(src){
   overlayImg.onload=()=>{
     document.getElementById('ovPrev').src=src;
     document.getElementById('ovSize').textContent=`${overlayImg.width} × ${overlayImg.height}px`;
-    applyPreset('br');
-    draw();
+    if(!baseImages.length){ applyPreset('br'); }  // 画像未取込のときだけ一時値を初期化
+    syncInputs(); draw();
   };
   overlayImg.src=src;
 }
@@ -365,23 +378,23 @@ function fitBase(canvas,ctx,img){
   ctx.drawImage(img,0,0);
   return {W,H};
 }
-function refW(){return baseImages.length?(baseImages[0].img.naturalWidth||baseImages[0].img.width):OUT;}
-function refH(){return baseImages.length?(baseImages[0].img.naturalHeight||baseImages[0].img.height):OUT;}
+function selW(){ return selImg()? (selImg().naturalWidth||selImg().width) : OUT; }
+function selH(){ return selImg()? (selImg().naturalHeight||selImg().height) : OUT; }
 
 // ---- preset positions ----
-function ovW(){return overlayImg.width*pos.scale;}
-function ovH(){return overlayImg.height*pos.scale;}
+function ovW(){return overlayImg.width*curPos().scale;}
+function ovH(){return overlayImg.height*curPos().scale;}
 function setActivePreset(p){
   document.querySelectorAll('[data-preset]').forEach(b=>
     b.classList.toggle('active', b.dataset.preset===p));
 }
 function applyPreset(p){
-  const w=ovW(), h=ovH(), W=refW(), H=refH();
-  if(p==='br'){pos.x=W-w; pos.y=H-h;}
-  else if(p==='tl'){pos.x=0; pos.y=0;}
-  else if(p==='right'){pos.x=W-w;}
-  else if(p==='tr'){pos.x=W-w; pos.y=0;}
-  else if(p==='bl'){pos.x=0; pos.y=H-h;}
+  const P=curPos(), w=ovW(), h=ovH(), W=selW(), H=selH();
+  if(p==='br'){P.x=W-w; P.y=H-h;}
+  else if(p==='tl'){P.x=0; P.y=0;}
+  else if(p==='right'){P.x=W-w;}
+  else if(p==='tr'){P.x=W-w; P.y=0;}
+  else if(p==='bl'){P.x=0; P.y=H-h;}
   setActivePreset(p);
   syncInputs();
 }
@@ -390,16 +403,30 @@ document.querySelectorAll('[data-preset]').forEach(b=>{
 });
 
 function syncInputs(){
-  document.getElementById('posX').value=Math.round(pos.x);
-  document.getElementById('posY').value=Math.round(pos.y);
+  const P=curPos();
+  document.getElementById('posX').value=Math.round(P.x);
+  document.getElementById('posY').value=Math.round(P.y);
+  const pct=Math.round(P.scale*100), sl=document.getElementById('scale');
+  sl.value=Math.min(+sl.max,Math.max(+sl.min,pct));
+  document.getElementById('scaleVal').textContent=pct;
 }
-document.getElementById('posX').oninput=e=>{pos.x=+e.target.value||0; setActivePreset(null); draw();};
-document.getElementById('posY').oninput=e=>{pos.y=+e.target.value||0; setActivePreset(null); draw();};
+document.getElementById('posX').oninput=e=>{curPos().x=+e.target.value||0; setActivePreset(null); draw();};
+document.getElementById('posY').oninput=e=>{curPos().y=+e.target.value||0; setActivePreset(null); draw();};
 document.getElementById('scale').oninput=e=>{
-  pos.scale=(+e.target.value)/100;
+  curPos().scale=(+e.target.value)/100;
   document.getElementById('scaleVal').textContent=e.target.value;
   draw();
 };
+// 現在の設定を全画像へ（サイズ違いは比率で合わせる）
+function applyToAll(){
+  const src=baseImages[selIdx]; if(!src)return;
+  baseImages.forEach((b,i)=>{ if(i===selIdx)return;
+    const sx=b.img.naturalWidth/src.img.naturalWidth, sy=b.img.naturalHeight/src.img.naturalHeight;
+    b.pos={x:src.pos.x*sx, y:src.pos.y*sy, scale:src.pos.scale*sx};
+  });
+  renderStrip1(); draw();
+}
+const _applyAllBtn=document.getElementById('applyAllBtn'); if(_applyAllBtn) _applyAllBtn.onclick=applyToAll;
 
 // ---- file intake ----
 const drop=document.getElementById('drop1'), fileInput=document.getElementById('file1');
@@ -427,7 +454,7 @@ async function addZip1(file){
     for(const e of entries){
       const blob=await e.async('blob');
       const r=await loadImageBlob(e.name.split('/').pop(), blob);
-      if(r){ baseImages.push(r); n++; }
+      if(r){ baseImages.push(withPos(r)); n++; }
     }
     return n;
   }catch(err){ alert('ZIPの読み込みに失敗しました: '+err.message); return 0; }
@@ -437,7 +464,7 @@ async function addFiles(files){
   for(const f of arr){
     if(/\.zip$/i.test(f.name)) added+=await addZip1(f);
     else if(f.type.startsWith('image/')||IMG_RE.test(f.name)){
-      const r=await loadImageBlob(f.name,f); if(r){ baseImages.push(r); added++; }
+      const r=await loadImageBlob(f.name,f); if(r){ baseImages.push(withPos(r)); added++; }
     }
   }
   if(added) refresh(); else renderList();
@@ -457,18 +484,23 @@ function refresh(){
   if(selIdx>=baseImages.length) selIdx=0;
   renderList();
   renderStrip1();
+  const multi=baseImages.length>1;
+  const ab=document.getElementById('applyAllBtn'); if(ab) ab.style.display=multi?'inline-flex':'none';
   document.getElementById('processBtn').disabled=baseImages.length===0;
   document.getElementById('pvHint').textContent=baseImages.length
-    ? 'プレビュー中。ドラッグ／座標で位置調整、右端の■でサイズ変更できます。' : '画像を取り込むとここに表示されます。';
+    ? (multi?'各画像は個別に位置・サイズを調整できます。ドラッグ／座標／右端■で調整。':'プレビュー中。ドラッグ／座標で位置調整、右端の■でサイズ変更できます。')
+    : '画像を取り込むとここに表示されます。';
+  syncInputs();
   draw();
 }
+function selectImg(i){ selIdx=i; renderStrip1(); syncInputs(); setActivePreset(null); draw(); }
 function renderStrip1(){
   const strip=document.getElementById('strip1');
   if(baseImages.length<2){ strip.style.display='none'; strip.innerHTML=''; return; }
   strip.style.display='flex';
   strip.innerHTML=baseImages.map((b,i)=>
     `<img src="${b.img.src}" class="${i===selIdx?'sel':''}" data-i="${i}" title="${b.name}">`).join('');
-  strip.querySelectorAll('img').forEach(im=>im.onclick=()=>{ selIdx=+im.dataset.i; renderStrip1(); draw(); });
+  strip.querySelectorAll('img').forEach(im=>im.onclick=()=>selectImg(+im.dataset.i));
 }
 
 // ---- draw preview ----
@@ -479,9 +511,9 @@ function draw(){
   }else{
     pv.width=OUT; pv.height=OUT; pctx.fillStyle='#fff'; pctx.fillRect(0,0,OUT,OUT);
   }
-  if(overlayImg.complete && overlayImg.width){
-    const fx=pvFX(), fy=pvFY();
-    const dx=pos.x*fx, dy=pos.y*fy, dw=ovW()*fx, dh=ovH()*fy;
+  if(baseImages.length && overlayImg.complete && overlayImg.width){
+    const P=curPos();
+    const dx=P.x, dy=P.y, dw=ovW(), dh=ovH();
     pctx.drawImage(overlayImg, dx, dy, dw, dh);
     // outline
     pctx.strokeStyle='rgba(200,16,46,.9)'; pctx.setLineDash([8,6]); pctx.lineWidth=2;
@@ -493,8 +525,8 @@ function draw(){
   }
 }
 function handleRect(){
-  const fx=pvFX(), fy=pvFY(), s=Math.max(14, pv.width*0.02);
-  return {x:(pos.x+ovW())*fx - s/2, y:(pos.y+ovH()/2)*fy - s/2, s};
+  const P=curPos(), s=Math.max(14, pv.width*0.02);
+  return {x:(P.x+ovW()) - s/2, y:(P.y+ovH()/2) - s/2, s};
 }
 
 // ---- drag to reposition / resize ----
@@ -511,32 +543,30 @@ function onHandle(p){
 }
 function applyScale(sc){
   sc=Math.min(Math.max(sc,0.05),5);
-  pos.scale=sc;
+  curPos().scale=sc;
   const pct=Math.round(sc*100);
   const sl=document.getElementById('scale');
   sl.value=Math.min(+sl.max,Math.max(+sl.min,pct));
   document.getElementById('scaleVal').textContent=pct;
 }
 function startDrag(e){
-  if(!(overlayImg.complete&&overlayImg.width))return;
+  if(!(baseImages.length&&overlayImg.complete&&overlayImg.width))return;
   const p=canvasPt(e);
   if(onHandle(p)){ resizing=true; e.preventDefault(); return; }        // 右端ハンドル→サイズ変更
-  const fx=pvFX(), fy=pvFY();
-  const dx=pos.x*fx, dy=pos.y*fy, dw=ovW()*fx, dh=ovH()*fy;
+  const P=curPos(), dx=P.x, dy=P.y, dw=ovW(), dh=ovH();
   if(p.x>=dx&&p.x<=dx+dw&&p.y>=dy&&p.y<=dy+dh){                         // 内側→移動
     dragging=true; off.x=p.x-dx; off.y=p.y-dy; e.preventDefault();
   }
 }
 function moveDrag(e){
-  const fx=pvFX(), fy=pvFY();
   if(resizing){
     const p=canvasPt(e);
-    applyScale((p.x - pos.x*fx)/(overlayImg.width*fx));   // 右端が指に追従・比率一定
+    applyScale((p.x - curPos().x)/overlayImg.width);   // 右端が指に追従・比率一定
     setActivePreset(null); draw(); e.preventDefault(); return;
   }
   if(!dragging)return;
   const p=canvasPt(e);
-  pos.x=Math.round((p.x-off.x)/fx); pos.y=Math.round((p.y-off.y)/fy);
+  curPos().x=Math.round(p.x-off.x); curPos().y=Math.round(p.y-off.y);
   setActivePreset(null); syncInputs(); draw(); e.preventDefault();
 }
 function endDrag(){dragging=false; resizing=false;}
@@ -556,12 +586,11 @@ document.getElementById('processBtn').onclick=async()=>{
   results=[];
   const c=document.createElement('canvas');
   const ctx=c.getContext('2d');
-  const RW=refW(), RH=refH();
   for(const b of baseImages){
-    const {W,H}=fitBase(c,ctx,b.img);
-    // 基準画像(1枚目)に対する比率で、位置もサイズも相対配置（サイズ違いでもプレビューと同じ見た目）
-    const sx=W/RW, sy=H/RH;
-    ctx.drawImage(overlayImg, pos.x*sx, pos.y*sy, ovW()*sx, ovH()*sy);
+    fitBase(c,ctx,b.img);
+    // 画像ごとの設定（位置・サイズ）で貼り付け
+    const P=b.pos;
+    ctx.drawImage(overlayImg, P.x, P.y, overlayImg.width*P.scale, overlayImg.height*P.scale);
     const blob=await new Promise(res=>c.toBlob(res,fmt,0.95));
     const ext=fmt==='image/png'?'png':'jpg';
     const name=b.name.replace(/\.[^.]+$/,'')+'_edited.'+ext;
