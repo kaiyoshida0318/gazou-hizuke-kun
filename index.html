@@ -55,11 +55,19 @@
     background:#f0f0f0 repeating-conic-gradient(#e9edf1 0% 25%, #f6f8fa 0% 50%) 50%/22px 22px;
     border:1px solid var(--line);border-radius:8px;overflow:hidden;}
   .preview-box canvas{width:100%;height:auto;display:block;cursor:move;touch-action:none;}
+  .preview-row{display:flex;gap:10px;align-items:flex-start;}
+  .preview-row .preview-box{flex:1;min-width:0;margin:0;}
+  .thumb-strip{flex:0 0 66px;width:66px;max-height:480px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;}
+  .thumb-strip img{width:100%;aspect-ratio:1/1;object-fit:contain;background:#fafbfc;border:2px solid var(--line);border-radius:6px;cursor:pointer;}
+  .thumb-strip img.sel{border-color:var(--accent);}
   .hint{font-size:12px;color:var(--muted);margin:8px 0 0;}
   .err{color:var(--accent);font-weight:700;}
   .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;margin-top:16px;}
   .thumb{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;font-size:11px;}
-  .thumb img{width:100%;display:block;aspect-ratio:1/1;object-fit:contain;background:#fafbfc;}
+  .thumb img{width:100%;display:block;aspect-ratio:1/1;object-fit:contain;background:#fafbfc;cursor:zoom-in;}
+  #zoomPop{position:fixed;display:none;z-index:9999;pointer-events:none;background:#fff;
+    border:2px solid var(--accent);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:3px;}
+  #zoomPop img{display:block;max-width:440px;max-height:440px;width:auto;height:auto;}
   .thumb .cap{padding:6px 8px;display:flex;justify-content:space-between;align-items:center;gap:6px;}
   .thumb .cap span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);}
   .thumb a{color:var(--accent);font-weight:700;text-decoration:none;}
@@ -138,9 +146,12 @@
 
       <!-- 右：プレビュー -->
       <div>
-        <h2>プレビュー（1枚目に反映）</h2>
-        <div class="preview-box">
-          <canvas id="previewCanvas" width="750" height="750"></canvas>
+        <h2>プレビュー（選択した画像に反映）</h2>
+        <div class="preview-row">
+          <div class="preview-box">
+            <canvas id="previewCanvas" width="750" height="750"></canvas>
+          </div>
+          <div class="thumb-strip" id="strip1" style="display:none;"></div>
         </div>
         <p class="hint" id="pvHint">画像を取り込むとここに表示されます。</p>
 
@@ -211,9 +222,12 @@
 
       <!-- 右：プレビュー -->
       <div>
-        <h2>プレビュー（1枚目に反映）</h2>
-        <div class="preview-box">
-          <canvas id="pv2" width="750" height="750"></canvas>
+        <h2>プレビュー（選択した画像に反映）</h2>
+        <div class="preview-row">
+          <div class="preview-box">
+            <canvas id="pv2" width="750" height="750"></canvas>
+          </div>
+          <div class="thumb-strip" id="strip2" style="display:none;"></div>
         </div>
         <p class="hint" id="pv2Hint">画像と商品情報を取り込むと、ここに表示されます。</p>
         <p class="hint" id="matchInfo"></p>
@@ -244,13 +258,18 @@ const OVERLAY_DATA_URL = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/4QA
 const OUT = 750; // 出力サイズ
 
 // ★バージョン：更新のたびにこの数字を上げる（例: 1.0.0 → 1.0.1）
-const VERSION = "1.6.2";
+const VERSION = "1.8.0";
 document.getElementById('ver').textContent = 'v' + VERSION;
 
 // ---- state ----
 let baseImages = [];      // {name, img}
+let selIdx = 0;           // プレビュー表示中の画像
 let overlayImg = new Image();
 let pos = {x:0, y:0, scale:1};
+// 選択中画像と基準(1枚目)との比率
+function selImg(){ return baseImages[selIdx] ? baseImages[selIdx].img : null; }
+function pvFX(){ const im=selImg(); return im ? (im.naturalWidth/refW()) : 1; }
+function pvFY(){ const im=selImg(); return im ? (im.naturalHeight/refH()) : 1; }
 
 // ---- tabs ----
 document.querySelectorAll('.tab').forEach(t=>{
@@ -378,26 +397,38 @@ document.getElementById('clearImportsBtn').onclick=()=>{
   if(baseImages.length && confirm('取り込んだ画像をすべて削除しますか？')){ baseImages=[]; refresh(); }
 };
 function refresh(){
+  if(selIdx>=baseImages.length) selIdx=0;
   renderList();
+  renderStrip1();
   document.getElementById('processBtn').disabled=baseImages.length===0;
   document.getElementById('pvHint').textContent=baseImages.length
-    ? '1枚目でプレビュー中。ドラッグまたは座標で位置調整できます。' : '画像を取り込むとここに表示されます。';
+    ? 'プレビュー中。ドラッグ／座標で位置調整、右端の■でサイズ変更できます。' : '画像を取り込むとここに表示されます。';
   draw();
+}
+function renderStrip1(){
+  const strip=document.getElementById('strip1');
+  if(baseImages.length<2){ strip.style.display='none'; strip.innerHTML=''; return; }
+  strip.style.display='flex';
+  strip.innerHTML=baseImages.map((b,i)=>
+    `<img src="${b.img.src}" class="${i===selIdx?'sel':''}" data-i="${i}" title="${b.name}">`).join('');
+  strip.querySelectorAll('img').forEach(im=>im.onclick=()=>{ selIdx=+im.dataset.i; renderStrip1(); draw(); });
 }
 
 // ---- draw preview ----
 const pv=document.getElementById('previewCanvas'), pctx=pv.getContext('2d');
 function draw(){
   if(baseImages.length){
-    fitBase(pv,pctx,baseImages[0].img);
+    fitBase(pv,pctx,selImg());
   }else{
     pv.width=OUT; pv.height=OUT; pctx.fillStyle='#fff'; pctx.fillRect(0,0,OUT,OUT);
   }
   if(overlayImg.complete && overlayImg.width){
-    pctx.drawImage(overlayImg, pos.x, pos.y, ovW(), ovH());
+    const fx=pvFX(), fy=pvFY();
+    const dx=pos.x*fx, dy=pos.y*fy, dw=ovW()*fx, dh=ovH()*fy;
+    pctx.drawImage(overlayImg, dx, dy, dw, dh);
     // outline
     pctx.strokeStyle='rgba(200,16,46,.9)'; pctx.setLineDash([8,6]); pctx.lineWidth=2;
-    pctx.strokeRect(pos.x, pos.y, ovW(), ovH()); pctx.setLineDash([]);
+    pctx.strokeRect(dx, dy, dw, dh); pctx.setLineDash([]);
     // 右端のリサイズハンドル（■）
     const h=handleRect();
     pctx.setLineDash([]); pctx.fillStyle='#fff'; pctx.strokeStyle='rgba(200,16,46,.95)'; pctx.lineWidth=2;
@@ -405,8 +436,8 @@ function draw(){
   }
 }
 function handleRect(){
-  const s=Math.max(14, pv.width*0.02);
-  return {x:pos.x+ovW()-s/2, y:pos.y+ovH()/2-s/2, s};
+  const fx=pvFX(), fy=pvFY(), s=Math.max(14, pv.width*0.02);
+  return {x:(pos.x+ovW())*fx - s/2, y:(pos.y+ovH()/2)*fy - s/2, s};
 }
 
 // ---- drag to reposition / resize ----
@@ -433,19 +464,22 @@ function startDrag(e){
   if(!(overlayImg.complete&&overlayImg.width))return;
   const p=canvasPt(e);
   if(onHandle(p)){ resizing=true; e.preventDefault(); return; }        // 右端ハンドル→サイズ変更
-  if(p.x>=pos.x&&p.x<=pos.x+ovW()&&p.y>=pos.y&&p.y<=pos.y+ovH()){       // 内側→移動
-    dragging=true; off.x=p.x-pos.x; off.y=p.y-pos.y; e.preventDefault();
+  const fx=pvFX(), fy=pvFY();
+  const dx=pos.x*fx, dy=pos.y*fy, dw=ovW()*fx, dh=ovH()*fy;
+  if(p.x>=dx&&p.x<=dx+dw&&p.y>=dy&&p.y<=dy+dh){                         // 内側→移動
+    dragging=true; off.x=p.x-dx; off.y=p.y-dy; e.preventDefault();
   }
 }
 function moveDrag(e){
+  const fx=pvFX(), fy=pvFY();
   if(resizing){
     const p=canvasPt(e);
-    applyScale((p.x-pos.x)/overlayImg.width);   // 左上を固定・右端が指に追従・比率一定
+    applyScale((p.x - pos.x*fx)/(overlayImg.width*fx));   // 右端が指に追従・比率一定
     setActivePreset(null); draw(); e.preventDefault(); return;
   }
   if(!dragging)return;
   const p=canvasPt(e);
-  pos.x=Math.round(p.x-off.x); pos.y=Math.round(p.y-off.y);
+  pos.x=Math.round((p.x-off.x)/fx); pos.y=Math.round((p.y-off.y)/fy);
   setActivePreset(null); syncInputs(); draw(); e.preventDefault();
 }
 function endDrag(){dragging=false; resizing=false;}
@@ -508,6 +542,7 @@ document.getElementById('zipBtn').onclick=async()=>{
    ============================================================ */
 const $=id=>document.getElementById(id);
 let f2Images=[];     // {name, base(拡張子なし＝商品番号), img}
+let selIdx2=0;       // プレビュー表示中の画像
 let csvHeaders=[];   // 列見出し
 let csvRows=[];      // データ行（配列の配列）
 let results2=[];     // {name, blob, url}
@@ -645,14 +680,10 @@ function drawText(ctx,l1,l2,W,H){
 const pv2=$('pv2'), p2ctx=pv2.getContext('2d');
 function currentPreviewItem(){
   if(!f2Images.length) return null;
-  if(!csvRows.length) return {img:f2Images[0].img, l1:'', l2:'', base:f2Images[0].base, matched:false};
-  const map=buildLookup();
-  // 最初にマッチする画像を優先、無ければ1枚目
-  for(const it of f2Images){
-    const hit=map.get(normKey(it.base));
-    if(hit) return {img:it.img, l1:hit.l1, l2:hit.l2, base:it.base, matched:true};
-  }
-  return {img:f2Images[0].img, l1:'', l2:'', base:f2Images[0].base, matched:false};
+  const it=f2Images[Math.min(selIdx2, f2Images.length-1)];  // 選択中の画像
+  if(!csvRows.length) return {img:it.img, l1:'', l2:'', base:it.base, matched:false};
+  const hit=buildLookup().get(normKey(it.base));
+  return {img:it.img, l1:hit?hit.l1:'', l2:hit?hit.l2:'', base:it.base, matched:!!hit};
 }
 function draw2(){
   const it=currentPreviewItem();
@@ -690,14 +721,24 @@ function updateMatch(){
   return matched.length;
 }
 function refresh2(){
+  if(selIdx2>=f2Images.length) selIdx2=0;
   renderList2();
+  renderStrip2();
   const m=updateMatch();
   $('process2').disabled = !(f2Images.length && csvRows.length && m>0);
   $('count2b').textContent=f2Images.length?`${f2Images.length} 枚`:'';
   $('pv2Hint').textContent=f2Images.length
-    ? (csvRows.length?'1枚目（マッチした画像）でプレビュー中。ドラッグまたは数値で位置調整できます。':'商品情報(CSV/Excel)も取り込むと文言が表示されます。')
+    ? (csvRows.length?'プレビュー中。ドラッグまたは数値で位置調整できます。':'商品情報(CSV/Excel)も取り込むと文言が表示されます。')
     : '画像と商品情報を取り込むと、ここに表示されます。';
   draw2();
+}
+function renderStrip2(){
+  const strip=$('strip2');
+  if(f2Images.length<2){ strip.style.display='none'; strip.innerHTML=''; return; }
+  strip.style.display='flex';
+  strip.innerHTML=f2Images.map((b,i)=>
+    `<img src="${b.img.src}" class="${i===selIdx2?'sel':''}" data-i="${i}" title="${b.name}">`).join('');
+  strip.querySelectorAll('img').forEach(im=>im.onclick=()=>{ selIdx2=+im.dataset.i; renderStrip2(); draw2(); });
 }
 
 // ---- ドラッグで位置調整 ----
@@ -749,6 +790,28 @@ $('zip2').onclick=async()=>{
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='text_images.zip'; a.click();
 };
+
+/* ============================================================
+   処理結果サムネイルのホバー拡大プレビュー（①②共通）
+   ============================================================ */
+const zoomPop=document.createElement('div'); zoomPop.id='zoomPop';
+const zoomImg=document.createElement('img'); zoomPop.appendChild(zoomImg);
+document.body.appendChild(zoomPop);
+function moveZoom(e){
+  const pad=18, w=zoomPop.offsetWidth||440, h=zoomPop.offsetHeight||440;
+  let x=e.clientX+pad, y=e.clientY+pad;
+  if(x+w>innerWidth)  x=e.clientX-pad-w;
+  if(y+h>innerHeight) y=innerHeight-h-8;
+  if(x<8) x=8; if(y<8) y=8;
+  zoomPop.style.left=x+'px'; zoomPop.style.top=y+'px';
+}
+function bindZoom(container){
+  container.addEventListener('mouseover',e=>{ if(e.target.tagName==='IMG'){ zoomImg.src=e.target.src; zoomPop.style.display='block'; moveZoom(e); }});
+  container.addEventListener('mousemove',e=>{ if(zoomPop.style.display==='block') moveZoom(e); });
+  container.addEventListener('mouseout',e=>{ if(e.target.tagName==='IMG'){ zoomPop.style.display='none'; }});
+}
+bindZoom(document.getElementById('thumbs'));
+bindZoom(document.getElementById('thumbs2'));
 </script>
 </body>
 </html>
