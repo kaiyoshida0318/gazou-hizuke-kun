@@ -124,15 +124,16 @@
         </div>
         <div class="field">
           <label>拡大縮小：<span id="scaleVal">100</span>%</label>
-          <input type="range" id="scale" min="20" max="300" value="100">
+          <input type="range" id="scale" min="5" max="500" value="100">
         </div>
         <div class="presets">
           <button class="btn ghost sm" data-preset="br">右下ぴったり</button>
+          <button class="btn ghost sm" data-preset="tl">左上ぴったり</button>
           <button class="btn ghost sm" data-preset="right">右端に合わせる</button>
           <button class="btn ghost sm" data-preset="tr">右上</button>
           <button class="btn ghost sm" data-preset="bl">左下</button>
         </div>
-        <p class="hint">プレビュー上で部品をドラッグしても位置を調整できます。全画像に同じ座標で貼り付けます。</p>
+        <p class="hint">プレビュー上で部品をドラッグで移動、右端の■を掴んでドラッグで拡大縮小（縦横比は固定）できます。全画像に同じ設定で貼り付けます。</p>
       </div>
 
       <!-- 右：プレビュー -->
@@ -243,7 +244,7 @@ const OVERLAY_DATA_URL = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/4QA
 const OUT = 750; // 出力サイズ
 
 // ★バージョン：更新のたびにこの数字を上げる（例: 1.0.0 → 1.0.1）
-const VERSION = "1.5.0";
+const VERSION = "1.6.2";
 document.getElementById('ver').textContent = 'v' + VERSION;
 
 // ---- state ----
@@ -301,6 +302,7 @@ function setActivePreset(p){
 function applyPreset(p){
   const w=ovW(), h=ovH(), W=refW(), H=refH();
   if(p==='br'){pos.x=W-w; pos.y=H-h;}
+  else if(p==='tl'){pos.x=0; pos.y=0;}
   else if(p==='right'){pos.x=W-w;}
   else if(p==='tr'){pos.x=W-w; pos.y=0;}
   else if(p==='bl'){pos.x=0; pos.y=H-h;}
@@ -396,30 +398,63 @@ function draw(){
     // outline
     pctx.strokeStyle='rgba(200,16,46,.9)'; pctx.setLineDash([8,6]); pctx.lineWidth=2;
     pctx.strokeRect(pos.x, pos.y, ovW(), ovH()); pctx.setLineDash([]);
+    // 右端のリサイズハンドル（■）
+    const h=handleRect();
+    pctx.setLineDash([]); pctx.fillStyle='#fff'; pctx.strokeStyle='rgba(200,16,46,.95)'; pctx.lineWidth=2;
+    pctx.beginPath(); pctx.rect(h.x, h.y, h.s, h.s); pctx.fill(); pctx.stroke();
   }
 }
+function handleRect(){
+  const s=Math.max(14, pv.width*0.02);
+  return {x:pos.x+ovW()-s/2, y:pos.y+ovH()/2-s/2, s};
+}
 
-// ---- drag to reposition ----
-let dragging=false, off={x:0,y:0};
+// ---- drag to reposition / resize ----
+let dragging=false, resizing=false, off={x:0,y:0};
 function canvasPt(e){
   const r=pv.getBoundingClientRect();
   const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
   const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
   return {x:cx*(pv.width/r.width), y:cy*(pv.height/r.height)};
 }
+function onHandle(p){
+  const h=handleRect(), tol=h.s;
+  return p.x>=h.x-tol/2 && p.x<=h.x+h.s+tol/2 && p.y>=h.y-tol && p.y<=h.y+h.s+tol;
+}
+function applyScale(sc){
+  sc=Math.min(Math.max(sc,0.05),5);
+  pos.scale=sc;
+  const pct=Math.round(sc*100);
+  const sl=document.getElementById('scale');
+  sl.value=Math.min(+sl.max,Math.max(+sl.min,pct));
+  document.getElementById('scaleVal').textContent=pct;
+}
 function startDrag(e){
+  if(!(overlayImg.complete&&overlayImg.width))return;
   const p=canvasPt(e);
-  if(p.x>=pos.x&&p.x<=pos.x+ovW()&&p.y>=pos.y&&p.y<=pos.y+ovH()){
+  if(onHandle(p)){ resizing=true; e.preventDefault(); return; }        // 右端ハンドル→サイズ変更
+  if(p.x>=pos.x&&p.x<=pos.x+ovW()&&p.y>=pos.y&&p.y<=pos.y+ovH()){       // 内側→移動
     dragging=true; off.x=p.x-pos.x; off.y=p.y-pos.y; e.preventDefault();
   }
 }
 function moveDrag(e){
+  if(resizing){
+    const p=canvasPt(e);
+    applyScale((p.x-pos.x)/overlayImg.width);   // 左上を固定・右端が指に追従・比率一定
+    setActivePreset(null); draw(); e.preventDefault(); return;
+  }
   if(!dragging)return;
   const p=canvasPt(e);
   pos.x=Math.round(p.x-off.x); pos.y=Math.round(p.y-off.y);
   setActivePreset(null); syncInputs(); draw(); e.preventDefault();
 }
-function endDrag(){dragging=false;}
+function endDrag(){dragging=false; resizing=false;}
+// ハンドル上ではカーソルを ew-resize に
+pv.addEventListener('mousemove',e=>{
+  if(dragging||resizing)return;
+  if(overlayImg.complete&&overlayImg.width&&onHandle(canvasPt(e))) pv.style.cursor='ew-resize';
+  else pv.style.cursor='move';
+});
 pv.addEventListener('mousedown',startDrag); window.addEventListener('mousemove',moveDrag); window.addEventListener('mouseup',endDrag);
 pv.addEventListener('touchstart',startDrag,{passive:false}); pv.addEventListener('touchmove',moveDrag,{passive:false}); pv.addEventListener('touchend',endDrag);
 
@@ -433,8 +468,9 @@ document.getElementById('processBtn').onclick=async()=>{
   const RW=refW(), RH=refH();
   for(const b of baseImages){
     const {W,H}=fitBase(c,ctx,b.img);
-    // 元画像サイズが違っても右下からの余白を保つ
-    ctx.drawImage(overlayImg, W-RW+pos.x, H-RH+pos.y, ovW(), ovH());
+    // 基準画像(1枚目)に対する比率で、位置もサイズも相対配置（サイズ違いでもプレビューと同じ見た目）
+    const sx=W/RW, sy=H/RH;
+    ctx.drawImage(overlayImg, pos.x*sx, pos.y*sy, ovW()*sx, ovH()*sy);
     const blob=await new Promise(res=>c.toBlob(res,fmt,0.95));
     const ext=fmt==='image/png'?'png':'jpg';
     const name=b.name.replace(/\.[^.]+$/,'')+'_edited.'+ext;
