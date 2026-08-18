@@ -64,10 +64,14 @@
   .err{color:var(--accent);font-weight:700;}
   .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;margin-top:16px;}
   .thumb{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;font-size:11px;}
-  .thumb img{width:100%;display:block;aspect-ratio:1/1;object-fit:contain;background:#fafbfc;cursor:zoom-in;}
-  #zoomPop{position:fixed;display:none;z-index:9999;pointer-events:none;background:#fff;
-    border:2px solid var(--accent);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:3px;}
-  #zoomPop img{display:block;max-width:440px;max-height:440px;width:auto;height:auto;}
+  .thumb img{width:100%;display:block;aspect-ratio:1/1;object-fit:contain;background:#fafbfc;}
+  .part-lib{display:grid;grid-template-columns:repeat(auto-fill,minmax(62px,1fr));gap:8px;margin-top:8px;}
+  .lib-item{position:relative;border:1px solid var(--line);border-radius:8px;padding:4px;text-align:center;cursor:pointer;background:#fff;}
+  .lib-item:hover{border-color:var(--accent);}
+  .lib-item img{width:100%;height:42px;object-fit:contain;background:#fafbfc;display:block;cursor:pointer;}
+  .lib-item span{display:block;font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;}
+  .lib-del{position:absolute;top:-7px;right:-7px;width:18px;height:18px;border-radius:50%;border:none;background:var(--accent);color:#fff;font-size:12px;line-height:1;cursor:pointer;padding:0;}
+  .lib-empty{font-size:11px;color:var(--muted);padding:6px 2px;}
   .thumb .cap{padding:6px 8px;display:flex;justify-content:space-between;align-items:center;gap:6px;}
   .thumb .cap span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);}
   .thumb a{color:var(--accent);font-weight:700;text-decoration:none;}
@@ -124,6 +128,11 @@
           <button class="btn ghost sm" id="ovBtn" style="margin-left:auto;">差し替え</button>
           <input type="file" id="ovFile" accept="image/*" hidden>
         </div>
+        <div class="bar" style="margin-top:8px;">
+          <button class="btn ghost sm" id="savePartBtn">＋ 今の部品を保存</button>
+          <span class="hint" style="margin:0;">よく使う部品を保存して呼び出せます</span>
+        </div>
+        <div class="part-lib" id="partLib"></div>
 
         <h2 style="margin-top:20px;">3. 貼り付け位置（座標）</h2>
         <div class="row">
@@ -258,7 +267,7 @@ const OVERLAY_DATA_URL = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/4QA
 const OUT = 750; // 出力サイズ
 
 // ★バージョン：更新のたびにこの数字を上げる（例: 1.0.0 → 1.0.1）
-const VERSION = "1.8.0";
+const VERSION = "1.9.1";
 document.getElementById('ver').textContent = 'v' + VERSION;
 
 // ---- state ----
@@ -299,6 +308,45 @@ document.getElementById('ovFile').onchange=e=>{
   const f=e.target.files[0]; if(!f)return;
   const r=new FileReader(); r.onload=ev=>setOverlay(ev.target.result); r.readAsDataURL(f);
 };
+
+/* ---- 部品画像ライブラリ（ブラウザ内 IndexedDB に保存） ---- */
+const PDB='gazouTool', PSTORE='parts';
+function pdb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(PDB,1);
+  r.onupgradeneeded=()=>{ const db=r.result; if(!db.objectStoreNames.contains(PSTORE)) db.createObjectStore(PSTORE,{keyPath:'id',autoIncrement:true}); };
+  r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+function pdbReq(mode,fn){ return pdb().then(db=>new Promise((res,rej)=>{ const tx=db.transaction(PSTORE,mode); const rq=fn(tx.objectStore(PSTORE)); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); })); }
+const partsAll=()=>pdbReq('readonly',s=>s.getAll());
+const partsAdd=rec=>pdbReq('readwrite',s=>s.add(rec));
+const partsDel=id=>pdbReq('readwrite',s=>s.delete(id));
+
+let libUrls=[];
+async function renderLib(){
+  const wrap=document.getElementById('partLib');
+  let items=[];
+  try{ items=await partsAll(); }catch(err){ wrap.innerHTML='<div class="lib-empty">保存機能を利用できません（このブラウザ/環境では無効）</div>'; return; }
+  libUrls.forEach(u=>URL.revokeObjectURL(u)); libUrls=[];
+  if(!items.length){ wrap.innerHTML='<div class="lib-empty">保存した部品はまだありません。上の「＋ 今の部品を保存」で追加できます。</div>'; return; }
+  wrap.innerHTML=items.map(it=>{ const url=URL.createObjectURL(it.blob); libUrls.push(url);
+    return `<div class="lib-item" title="${it.name}">
+      <img src="${url}" data-url="${url}">
+      <span>${it.name}</span>
+      <button class="lib-del" data-id="${it.id}" title="削除">×</button>
+    </div>`; }).join('');
+  wrap.querySelectorAll('.lib-item img').forEach(im=>im.onclick=()=>setOverlay(im.dataset.url));
+  wrap.querySelectorAll('.lib-del').forEach(b=>b.onclick=async e=>{ e.stopPropagation();
+    if(confirm('この部品を削除しますか？')){ await partsDel(+b.dataset.id); renderLib(); } });
+}
+document.getElementById('savePartBtn').onclick=async()=>{
+  if(!(overlayImg.complete&&overlayImg.width)){ alert('保存する部品画像がありません。'); return; }
+  const name=prompt('この部品の名前を入力してください', '部品'+(new Date().toLocaleDateString('ja-JP')));
+  if(name===null) return;
+  const c=document.createElement('canvas'); c.width=overlayImg.naturalWidth; c.height=overlayImg.naturalHeight;
+  c.getContext('2d').drawImage(overlayImg,0,0);
+  const blob=await new Promise(r=>c.toBlob(r,'image/png'));
+  try{ await partsAdd({name:(name.trim()||'部品'), blob, ts:Date.now()}); renderLib(); }
+  catch(err){ alert('保存に失敗しました: '+err.message); }
+};
+renderLib();
 
 // ---- 元画像サイズをそのまま使う（白い余白を作らない） ----
 function fitBase(canvas,ctx,img){
@@ -791,27 +839,6 @@ $('zip2').onclick=async()=>{
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='text_images.zip'; a.click();
 };
 
-/* ============================================================
-   処理結果サムネイルのホバー拡大プレビュー（①②共通）
-   ============================================================ */
-const zoomPop=document.createElement('div'); zoomPop.id='zoomPop';
-const zoomImg=document.createElement('img'); zoomPop.appendChild(zoomImg);
-document.body.appendChild(zoomPop);
-function moveZoom(e){
-  const pad=18, w=zoomPop.offsetWidth||440, h=zoomPop.offsetHeight||440;
-  let x=e.clientX+pad, y=e.clientY+pad;
-  if(x+w>innerWidth)  x=e.clientX-pad-w;
-  if(y+h>innerHeight) y=innerHeight-h-8;
-  if(x<8) x=8; if(y<8) y=8;
-  zoomPop.style.left=x+'px'; zoomPop.style.top=y+'px';
-}
-function bindZoom(container){
-  container.addEventListener('mouseover',e=>{ if(e.target.tagName==='IMG'){ zoomImg.src=e.target.src; zoomPop.style.display='block'; moveZoom(e); }});
-  container.addEventListener('mousemove',e=>{ if(zoomPop.style.display==='block') moveZoom(e); });
-  container.addEventListener('mouseout',e=>{ if(e.target.tagName==='IMG'){ zoomPop.style.display='none'; }});
-}
-bindZoom(document.getElementById('thumbs'));
-bindZoom(document.getElementById('thumbs2'));
 </script>
 </body>
 </html>
