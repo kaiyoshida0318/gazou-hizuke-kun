@@ -72,6 +72,13 @@
   .lib-item span{display:block;font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;}
   .lib-del{position:absolute;top:-7px;right:-7px;width:18px;height:18px;border-radius:50%;border:none;background:var(--accent);color:#fff;font-size:12px;line-height:1;cursor:pointer;padding:0;}
   .lib-empty{font-size:11px;color:var(--muted);padding:6px 2px;}
+  .modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.78);display:none;align-items:center;justify-content:center;z-index:10000;padding:24px;}
+  .modal-ov.open{display:flex;}
+  .modal-in{position:relative;max-width:94vw;max-height:94vh;}
+  .modal-in canvas{display:block;max-width:94vw;max-height:86vh;width:auto;height:auto;background:#fff;box-shadow:0 12px 48px rgba(0,0,0,.55);border-radius:4px;}
+  .modal-cap{color:#fff;font-size:12px;text-align:center;margin-top:10px;}
+  .modal-x{position:absolute;top:-14px;right:-14px;width:38px;height:38px;border-radius:50%;border:none;background:#fff;color:#222;font-size:22px;line-height:1;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.5);}
+  .btn.pv{background:#1f2733;color:#fff;}
   .thumb .cap{padding:6px 8px;display:flex;justify-content:space-between;align-items:center;gap:6px;}
   .thumb .cap span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);}
   .thumb a{color:var(--accent);font-weight:700;text-decoration:none;}
@@ -167,6 +174,7 @@
           <div class="thumb-strip" id="strip1" style="display:none;"></div>
         </div>
         <p class="hint" id="pvHint">画像を取り込むとここに表示されます。</p>
+        <div class="bar" style="margin-top:6px;"><button class="btn pv sm" id="bigPv1">⤢ 正式プレビュー（拡大・枠線なし）</button></div>
 
         <div class="bar">
           <button class="btn primary" id="processBtn" disabled>この設定で一括処理する</button>
@@ -243,6 +251,7 @@
           <div class="thumb-strip" id="strip2" style="display:none;"></div>
         </div>
         <p class="hint" id="pv2Hint">画像と商品情報を取り込むと、ここに表示されます。</p>
+        <div class="bar" style="margin-top:6px;"><button class="btn pv sm" id="bigPv2">⤢ 正式プレビュー（拡大・枠線なし）</button></div>
         <p class="hint" id="matchInfo"></p>
 
         <div class="bar">
@@ -266,12 +275,20 @@
   </section>
 </div>
 
+<div class="modal-ov" id="pvModal">
+  <div class="modal-in">
+    <button class="modal-x" id="pvModalX" title="閉じる">×</button>
+    <canvas id="modalCanvas"></canvas>
+    <div class="modal-cap">正式プレビュー（枠線なし・実際の仕上がり）／クリックまたは Esc で閉じる</div>
+  </div>
+</div>
+
 <script>
 const OVERLAY_DATA_URL = "data:image/jpeg;base64,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";
 const OUT = 750; // 出力サイズ
 
 // ★バージョン：更新のたびにこの数字を上げる（例: 1.0.0 → 1.0.1）
-const VERSION = "2.0.1";
+const VERSION = "2.1.0";
 document.getElementById('ver').textContent = 'v' + VERSION;
 
 // ---- state ----
@@ -875,6 +892,35 @@ $('zip2').onclick=async()=>{
   const zip=new JSZip(); results2.forEach(r=>zip.file(r.name,r.blob));
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='text_images.zip'; a.click();
+};
+
+/* ============================================================
+   正式プレビュー（モーダル・枠線/ハンドルなしの実際の仕上がり）
+   ============================================================ */
+const pvModal=document.getElementById('pvModal');
+const modalCanvas=document.getElementById('modalCanvas'), mctx=modalCanvas.getContext('2d');
+function closePvModal(){ pvModal.classList.remove('open'); }
+pvModal.addEventListener('click',e=>{ if(e.target===pvModal) closePvModal(); });
+document.getElementById('pvModalX').onclick=closePvModal;
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closePvModal(); });
+
+document.getElementById('bigPv1').onclick=()=>{
+  if(!baseImages.length){ alert('画像を取り込んでください。'); return; }
+  const b=baseImages[selIdx];
+  fitBase(modalCanvas,mctx,b.img);
+  if(overlayImg.complete&&overlayImg.width){
+    const P=b.pos;
+    mctx.drawImage(overlayImg, P.x, P.y, overlayImg.width*P.scale, overlayImg.height*P.scale);
+  }
+  pvModal.classList.add('open');
+};
+document.getElementById('bigPv2').onclick=()=>{
+  if(!f2Images.length){ alert('画像を取り込んでください。'); return; }
+  const it=currentPreviewItem();
+  const {W,H}=fitBase(modalCanvas,mctx,it.img);
+  drawText(mctx,it.l1,it.l2,W,H);
+  draw2(); // 本体プレビューの lastBox を元に戻す
+  pvModal.classList.add('open');
 };
 
 </script>
